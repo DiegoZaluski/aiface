@@ -1,0 +1,64 @@
+[package]
+categories = ["api-bindings"]
+description = "Aiface - unified multi-provider LLM client (Claude, OpenAI, Gemini, Copilot and OpenAI-compatible endpoints)"
+edition = "2024"
+keywords = ["llm", "ai", "openai", "claude", "gemini"]
+license = "Apache-2.0"
+name = "aiface"
+readme = "README.md"
+repository = "https://github.com/DiegoZaluski/co-sh"
+version = "0.1.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+# Base64 transport for multimodal image delivery (screenshot tool results
+# travel inline as `ImageBlock` on the message channel).
+base64 = "0.22"
+log = "0.4"
+serde_json = "1.0.150"
+tokio = { version = "1.52.3", features = ["full"] }
+async-stream = "0.3"
+tokio-stream = "0.1"
+reqwest = { version = "0.13", features = ["json", "form"] }
+url = "2"
+# oauth — Authorization Code + PKCE (RFC 7636), loopback redirect
+# (RFC 8252) and Device Grant (RFC 8628), profiled per RFC 9700 (BCP 240).
+# PKCE S256 (RFC 7636 §4.2): SHA-256 over the verifier, base64url no-pad.
+sha2 = "0.10"
+# OS entropy for code_verifier / CSRF state — no time/seed-derived fallback;
+# if entropy is unavailable the authorization attempt aborts.
+getrandom = "0.3"
+# Loopback redirect receiver: hyper 1 with real header/read limits instead of
+# a hand-rolled HTTP parser over TcpListener (RFC 8252 §7.3, §8.1).
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+# System-browser handoff for the authorization URL. `hardened` restricts the
+# launcher to http(s) schemes. Opening is best-effort — the caller can always
+# display the URL for manual visit (headless/SSH sessions).
+webbrowser = { version = "1", features = ["hardened"] }
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+# copilot — the OFFICIAL GitHub Copilot agent runtime SDK (github/ org, MIT).
+# Drives the Copilot runtime binary over JSON-RPC (stdio).
+github-copilot-sdk = "1.0"
+directories = "6.0.0"
+zeroize = { version = "=1.7", features = ["derive"] }
+keyring = { version = "4.1.6", features = [
+    "v1",
+    "apple-native-keyring-store",
+    "windows-native-keyring-store",
+    "zbus-secret-service-keyring-store",
+] }
+
+regex = "1"
+thiserror = "2"
+
+[dev-dependencies]
+env_logger = "0.11"
+serial_test = "3"
+tempfile = "3"
+
+[[example]]
+name = "client"
+path = "examples/client.rs"
