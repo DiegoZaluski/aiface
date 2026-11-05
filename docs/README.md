@@ -8,6 +8,7 @@ Module guides for the `aiface` crate — a unified multi-provider LLM client.
 |---|---|
 | [`connector.md`](connector.md) | Overview: one client, three provider families |
 | [`client.md`](client.md) | The `Connector` builder API: chat, streaming, embeddings |
+| [`decision.md`](decision.md) | System One decisions: typed questions, calibrated probabilities, LLM wrapper |
 | [`params.md`](params.md) | Request vocabulary: messages, tools, response formats |
 | [`output.md`](output.md) | Output types: `ChatOutput`, streams, model listing |
 | [`discovery.md`](discovery.md) | Context-window discovery and reasoning capability detection |

@@ -11,6 +11,7 @@ pub(crate) mod claude;
 pub(crate) mod common;
 pub(crate) mod copilot;
 pub(crate) mod cost;
+pub mod decision;
 pub(crate) mod discovery;
 pub(crate) mod gemini;
 pub mod oauth;
@@ -38,6 +39,10 @@ pub use discovery::{
     model_reasoning_from_catalog, refresh_pricing_catalog, resolve_reasoning_effort,
 };
 pub use error::ConnectorError;
+pub use decision::{
+    DecisionAnswer, DecisionOutput, DecisionQuestion, DecisionRequest, Probabilities,
+    ProbabilitySource,
+};
 pub use output::{ChatOutput, ChatStream, LsOutput, ModelInfo, StreamChunk};
 pub use provider::Family;
 // Re-exported so `Connector::token_usage` consumers name the type without

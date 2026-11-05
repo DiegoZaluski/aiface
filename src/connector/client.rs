@@ -1,5 +1,6 @@
 use super::TokenUsage;
 use super::cost::{CostError, ProviderCost, provider_session_cost};
+use super::decision::DecisionRequest;
 use super::error::ConnectorError;
 use super::output::{ChatOutput, ChatStream, LsOutput};
 use super::params::{ChatMessage, Parameters, ResponseFormat, ToolCallMode, ToolDefinition};
@@ -31,11 +32,11 @@ use super::openai_compatible;
 #[must_use]
 pub struct Connector {
     provider: Option<&'static ProviderConfig>, // None before new() succeeds
-    params: Parameters,
+    pub(crate) params: Parameters,
 }
 
 impl Connector {
-    fn provider(&self) -> Result<&'static ProviderConfig, ConnectorError> {
+    pub(crate) fn provider(&self) -> Result<&'static ProviderConfig, ConnectorError> {
         self.provider.ok_or(ConnectorError::NotImplemented(
             "Connector used without calling new()",
         ))
@@ -130,6 +131,41 @@ impl Connector {
     pub fn with_response_format(mut self, v: ResponseFormat) -> Self {
         self.params.response_format = Some(v);
         self
+    }
+
+    /// Start a DECISION request: typed questions in, probability
+    /// distributions out — the System One contract.
+    ///
+    /// The backend is chosen by the connector's provider, invisibly:
+    /// - a decision provider (`typesafe`, `azure-decision`, or
+    ///   `openrouter`'s System One route) calls the native decisions API —
+    ///   calibrated probabilities from a purpose-built scoring model;
+    /// - any other provider (all 28 chat backends) routes the same
+    ///   questions through the LLM wrapper — the model's SELF-REPORTED
+    ///   probabilities, flagged as [`ProbabilitySource::DerivedFromLlm`] in
+    ///   the output.
+    ///
+    /// Both paths return the same [`DecisionOutput`], validated against
+    /// the questions declared on the builder.
+    ///
+    /// ```
+    /// # async fn example() -> Result<(), aiface::connector::ConnectorError> {
+    /// # use aiface::connector::Connector;
+    /// let output = Connector::new("typesafe")?
+    ///     .with_api_key("ts-...")
+    ///     .decide("Customer says their production service is down.")
+    ///     .noul("urgent", "Is this request urgent?")
+    ///     .choice("team", "Which team should handle this?", [
+    ///         ("billing", "Charges and refunds"),
+    ///         ("technical", "Bugs and outages"),
+    ///     ])
+    ///     .send()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn decide(&self, state: impl Into<serde_json::Value>) -> DecisionRequest<'_> {
+        DecisionRequest::new(self, state.into())
     }
 
     /// Whether to return log probabilities of the output tokens.
@@ -321,6 +357,8 @@ impl Connector {
             Family::Gemini => gemini::chat(provider, &self.params, prompt, None, service).await,
             Family::Claude => claude::chat(provider, &self.params, prompt, None, service).await,
             Family::Copilot => copilot::chat(provider, &self.params, prompt, None, service).await,
+            // The System One family's only surface is decisions — no chat.
+            Family::SystemOne => Err(ConnectorError::NotImplemented("chat on a decision provider")),
         }
     }
 
@@ -353,6 +391,7 @@ impl Connector {
             Family::Copilot => {
                 copilot::chat(provider, &self.params, prompt, Some(system), service).await
             }
+            Family::SystemOne => Err(ConnectorError::NotImplemented("chat on a decision provider")),
         }
     }
 
@@ -379,6 +418,8 @@ impl Connector {
             Family::Claude => Err(ConnectorError::NotImplemented("embedding")),
             // The Copilot runtime has no embeddings surface.
             Family::Copilot => Err(ConnectorError::NotImplemented("embedding")),
+            // The System One family's only surface is decisions — no embeddings.
+            Family::SystemOne => Err(ConnectorError::NotImplemented("embedding")),
         }
     }
 
@@ -413,6 +454,7 @@ impl Connector {
             Family::Copilot => {
                 copilot::chat_stream(provider, &self.params, prompt, None, service).await
             }
+            Family::SystemOne => Err(ConnectorError::NotImplemented("stream_chat on a decision provider")),
         }
     }
 
@@ -456,6 +498,7 @@ impl Connector {
             Family::Copilot => {
                 copilot::chat_stream(provider, &self.params, prompt, Some(system), service).await
             }
+            Family::SystemOne => Err(ConnectorError::NotImplemented("stream_chat on a decision provider")),
         }
     }
 
@@ -498,6 +541,7 @@ impl Connector {
             Family::Copilot => {
                 copilot::chat_stream(provider, &params, prompt, Some(system), service).await
             }
+            Family::SystemOne => Err(ConnectorError::NotImplemented("stream_chat on a decision provider")),
         }
     }
 
@@ -573,6 +617,7 @@ impl Connector {
                 )
                 .await
             }
+            Family::SystemOne => Err(ConnectorError::NotImplemented("stream_chat on a decision provider")),
         }
     }
 
@@ -594,6 +639,8 @@ impl Connector {
             Family::Claude => claude::extract_tokens(raw),
             Family::Gemini => gemini::extract_tokens(raw),
             Family::Copilot => copilot::extract_tokens(raw),
+            // No usage surface on the decisions API.
+            Family::SystemOne => None,
         }
     }
 
@@ -629,6 +676,8 @@ impl Connector {
             Family::OpenAi => openai::extract_usage(raw),
             Family::Gemini => gemini::extract_usage(raw),
             Family::Copilot => copilot::extract_usage(raw),
+            // No usage surface on the decisions API (decide() parses its own).
+            Family::SystemOne => None,
         }?;
         usage.reported_cost = super::output::extract_reported_cost(raw).or(usage.reported_cost);
         usage.reported_cost_credits =
@@ -892,6 +941,8 @@ impl Connector {
                 )
                 .await
             }
+            // The decisions API has no model-catalog endpoint.
+            Family::SystemOne => Err(ConnectorError::NotImplemented("list_models on a decision provider")),
         }
     }
 }

@@ -51,6 +51,33 @@ pub enum ConnectorError {
     NoEmbeddings,
     /// An operation is not yet implemented for the given provider.
     NotImplemented(&'static str),
+    /// A decision question declaration is outside the System One contract's
+    /// bounds (fewer than 2 options, more than 255 choices, more than 10
+    /// score levels, ...). Raised BEFORE the request is sent — the contract
+    /// is checked locally first.
+    InvalidQuestion(String),
+    /// A decision answer broke the schema the caller declared: wrong answer
+    /// type for the question, an option the question never declared
+    /// (hallucinated by an LLM wrapper, or a contract break from a native
+    /// backend), a probability outside [0, 1], or an answer for a question
+    /// the caller never declared.
+    DecisionSchemaViolation {
+        /// The question name the violation concerns.
+        question: String,
+        /// What was wrong with the answer.
+        detail: String,
+    },
+    /// A declared question has no answer in the backend's response — the
+    /// contract requires every declared question to be answered.
+    MissingDecisionAnswer(String),
+    /// A decision answer's type does not match the accessor's expectation
+    /// (e.g. `DecisionOutput::choice` on a `noul` answer).
+    DecisionTypeMismatch {
+        /// The answer kind the accessor expected.
+        expected: &'static str,
+        /// The answer kind that actually arrived.
+        got: &'static str,
+    },
     /// The SSE stream ended without a `[DONE]` signal.
     StreamTerminated,
 }
@@ -279,6 +306,16 @@ impl fmt::Display for ConnectorError {
             Self::NoContent => write!(f, "No content in response"),
             Self::NoEmbeddings => write!(f, "No embeddings in response"),
             Self::NotImplemented(feature) => write!(f, "{feature} is not yet implemented"),
+            Self::InvalidQuestion(detail) => write!(f, "Invalid decision question: {detail}"),
+            Self::DecisionSchemaViolation { question, detail } => {
+                write!(f, "Decision schema violation for `{question}`: {detail}")
+            }
+            Self::MissingDecisionAnswer(question) => {
+                write!(f, "No decision answer for question `{question}`")
+            }
+            Self::DecisionTypeMismatch { expected, got } => {
+                write!(f, "Decision answer is `{got}`; expected `{expected}`")
+            }
             Self::StreamTerminated => write!(f, "Stream terminated unexpectedly"),
         }
     }

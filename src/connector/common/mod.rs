@@ -128,6 +128,42 @@ pub async fn send_request(
     Ok(text)
 }
 
+/// Non-streaming request honoring the caller's retry configuration — the
+/// shape [`send_with_retry`] expects (URL, headers, provider extras and
+/// the serialized JSON body re-attached per attempt), plus the connector's
+/// `retry_enabled` / `max_retries` / `retry_delay_override` parameters.
+pub async fn send_request_retrying(
+    config: &ProviderConfig,
+    url: &str,
+    body: &(impl serde::Serialize + Sync),
+    headers: &[(&str, String)],
+    retry_enabled: bool,
+    max_retries: Option<usize>,
+    retry_delay_override: Option<Duration>,
+) -> Result<String, ConnectorError> {
+    let json_body = serde_json::to_string(body)?;
+    let mut request_builder = apply_provider_headers(
+        shared_client()
+            .post(url)
+            .header("Content-Type", "application/json"),
+        config,
+    );
+    for (key, value) in headers {
+        request_builder = request_builder.header(*key, value.as_str());
+    }
+    let max_retries = if retry_enabled {
+        max_retries
+    } else {
+        Some(0)
+    };
+    let response =
+        send_with_retry(&request_builder, json_body, retry_delay_override, max_retries).await?;
+    let text = tokio::time::timeout(Duration::from_mins(1), response.text())
+        .await
+        .map_err(|_| ConnectorError::Network("request timed out after 60s".to_string()))??;
+    Ok(text)
+}
+
 pub async fn send_get_request(
     config: &ProviderConfig,
     url: &str,

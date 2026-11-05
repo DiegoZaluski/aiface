@@ -28,6 +28,10 @@ chat, tool calling, embeddings, token usage and cost tracking.
   device-flow adapter, with tokens stored in the OS keyring.
 - **Multimodal** — image blocks travel inline (base64) on the message
   channel.
+- **System One decisions** — typed decisions with probabilities from
+  decision models (TypeSafe Jev, Microsoft-Decision-1, OpenRouter's
+  System One route) or wrapped LLMs, under one `Connector::decide`
+  contract (see [`docs/decision.md`](docs/decision.md)).
 
 ## Usage
 
@@ -46,9 +50,10 @@ let reply = Connector::new("openai")?
 
 Guides for every module live in [`docs/`](docs/README.md):
 
-`connector` (overview) · `client` (builder API) · `params` (request
-vocabulary) · `output` (output types) · `discovery` (context windows) ·
-`provider` (registry & keys) · `error` (classification & retry).
+`connector` (overview) · `client` (builder API) · `decision` (System One
+decisions) · `params` (request vocabulary) · `output` (output types) ·
+`discovery` (context windows) · `provider` (registry & keys) · `error`
+(classification & retry).
 
 A runnable walkthrough lives in [`examples/client.rs`](examples/client.rs):
 

@@ -150,6 +150,15 @@ pub enum Family {
     /// accounts even though the account can chat fine (see
     /// `copilot::models`).
     Copilot,
+    /// The System One DECISIONS API (`POST /v1/systemone`): typed
+    /// questions in, calibrated probability distributions out — no
+    /// generated prose. Served by decision models (TypeSafe Jev,
+    /// Microsoft-Decision-1 on Azure Foundry) and by OpenRouter's
+    /// System One route. An ISOLATED family like `Copilot`: it shares
+    /// none of the chat request machinery; `chat`, `stream_chat` and
+    /// `embed` are unsupported (the surface is
+    /// [`Connector::decide`](crate::connector::Connector::decide)).
+    SystemOne,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -162,6 +171,19 @@ pub struct ProviderConfig {
     /// Whether the endpoint runs on the user's machine (`localhost`). Local
     /// providers have no API key: they are configured with a base URL instead.
     pub local: bool,
+    /// Path appended to `base_url` for the DECISIONS API
+    /// ([`Connector::decide`](crate::connector::Connector::decide)), when the
+    /// provider serves one. The System One contract travels on a provider-
+    /// specific path — TypeSafe direct is `/v1/systemone`, Microsoft Foundry
+    /// nests it at `/providers/microsoft/v1/systemone`, and OpenRouter's
+    /// route lives under `/api/v1/systemone` (its `base_url` already carries
+    /// `/api/v1`). `None` = the provider has no decisions surface.
+    pub decisions_path: Option<&'static str>,
+    /// Default model for the DECISIONS API when the provider's chat
+    /// default is not a decision model (OpenRouter's `default_model` is a
+    /// chat model, but its System One route serves Jev). `None` falls back
+    /// to `default_model` — the case for the dedicated decision providers.
+    pub decisions_default_model: Option<&'static str>,
 }
 
 impl ProviderConfig {
@@ -178,6 +200,8 @@ impl ProviderConfig {
             default_model,
             needs_extra_headers: false,
             local: false,
+            decisions_path: None,
+            decisions_default_model: None,
         }
     }
 
@@ -197,6 +221,29 @@ impl ProviderConfig {
             default_model,
             needs_extra_headers,
             local: false,
+            decisions_path: None,
+            decisions_default_model: None,
+        }
+    }
+
+    /// A System One decision provider: the family's ONLY surface is the
+    /// decisions API on `decisions_path` (chat/stream/embed are not part of
+    /// this family's contract).
+    const fn decisions(
+        name: &'static str,
+        base_url: &'static str,
+        default_model: &'static str,
+        decisions_path: &'static str,
+    ) -> Self {
+        Self {
+            name,
+            family: Family::SystemOne,
+            base_url,
+            default_model,
+            needs_extra_headers: false,
+            local: false,
+            decisions_path: Some(decisions_path),
+            decisions_default_model: None,
         }
     }
 
@@ -208,7 +255,20 @@ impl ProviderConfig {
             default_model: "llama3.3",
             needs_extra_headers: false,
             local: true,
+            decisions_path: None,
+            decisions_default_model: None,
         }
+    }
+
+    /// Attach the decisions-API path to a CHAT provider that also serves
+    /// the System One route (OpenRouter: its `base_url` already carries
+    /// `/api/v1`, so the System One endpoint is `/systemone` past it). The
+    /// route's default model differs from the chat default (Jev, not the
+    /// chat catalog's pick).
+    const fn with_decisions_path(mut self, path: &'static str) -> Self {
+        self.decisions_path = Some(path);
+        self.decisions_default_model = Some("jev-latest");
+        self
     }
 }
 
@@ -258,7 +318,12 @@ const PROVIDERS: &[(&str, ProviderConfig)] = &[
             "https://openrouter.ai/api/v1",
             "qwen/qwen-2.5-72b-instruct",
             true,
-        ),
+        )
+        // OpenRouter also serves the System One route (documented at
+        // openrouter.ai/docs/guides/community/typesafe-sdk): its base URL
+        // already carries `/api/v1`, so the decisions path is `/systemone`
+        // past it.
+        .with_decisions_path("/systemone"),
     ),
     (
         "xai",
@@ -544,6 +609,34 @@ const PROVIDERS: &[(&str, ProviderConfig)] = &[
         "tabbyapi",
         ProviderConfig::local("tabbyapi", "http://localhost:5000/v1"),
     ),
+    // ── System One decision providers ─────────────────────────────────
+    // The decisions API (`POST /v1/systemone`): typed questions in,
+    // calibrated probability distributions out. Chat/stream/embed are not
+    // part of these families' contract — `Connector::decide` is the surface.
+    (
+        // TypeSafe direct — Jev is the reference System One model.
+        "typesafe",
+        ProviderConfig::decisions(
+            "typesafe",
+            "https://api.typesafe.ai",
+            "jev-latest",
+            "/v1/systemone",
+        ),
+    ),
+    (
+        // Microsoft-Decision-1 on Azure AI Foundry. The request's `model`
+        // value is the DEPLOYMENT name (set with `with_model`), not the
+        // underlying model. `with_base_url` points at the Foundry resource
+        // endpoint; authentication is the resource API key via
+        // `AZURE_FOUNDRY_KEY` (or `with_api_key`).
+        "azure-decision",
+        ProviderConfig::decisions(
+            "azure-decision",
+            "https://<your-foundry-resource>",
+            "microsoft-decision-1",
+            "/providers/microsoft/v1/systemone",
+        ),
+    ),
 ];
 
 const API_KEY_ENVS: &[(&str, &str)] = &[
@@ -581,6 +674,13 @@ const API_KEY_ENVS: &[(&str, &str)] = &[
     // endpoint (platform.kimi.ai/docs/api/overview —
     // `Authorization: Bearer $MOONSHOT_API_KEY`).
     ("kimi", "MOONSHOT_API_KEY"),
+    // TypeSafe (Jev, System One decisions API): Bearer key issued by
+    // console.typesafe.ai, documented as `TYPESAFE_API_KEY`.
+    ("typesafe", "TYPESAFE_API_KEY"),
+    // Microsoft-Decision-1 on Azure AI Foundry: the deployment resource's
+    // API key (`api-key` header). Entra-ID bearer auth stays available via
+    // `with_api_key` (the caller supplies the token itself).
+    ("azure-decision", "AZURE_FOUNDRY_KEY"),
 ];
 
 /// Secondary key sources for providers whose subscriptions share an account:
@@ -691,6 +791,8 @@ pub fn register_custom_providers(entries: Vec<(String, String, Family)>) -> Resu
             default_model: "",
             needs_extra_headers: false,
             local: false,
+            decisions_path: None,
+            decisions_default_model: None,
         })));
     }
     *CUSTOM_PROVIDERS

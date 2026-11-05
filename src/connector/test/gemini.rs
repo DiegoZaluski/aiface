@@ -773,6 +773,8 @@ fn api_version_routes_thinking_to_beta() {
         default_model: "gemini-3-pro-preview",
         needs_extra_headers: false,
         local: false,
+        decisions_path: None,
+        decisions_default_model: None,
     };
     let thinking = Parameters {
         reasoning_effort: Some("high".to_string()),

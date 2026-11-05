@@ -396,7 +396,8 @@ impl Stream for ChatStream {
 
 /// Extract the normalized [`TokenUsage`] from a raw SSE frame using the
 /// family-specific field shapes (`usage` vs `usageMetadata`, cache detail
-/// paths, …).
+/// paths, …). The System One family has no chat usage surface (its own
+/// caller parses `usage` directly).
 fn extract_family_usage(family: Family, raw: &str) -> Option<TokenUsage> {
     match family {
         Family::OpenAICompatible => super::openai_compatible::extract_usage(raw),
@@ -404,6 +405,7 @@ fn extract_family_usage(family: Family, raw: &str) -> Option<TokenUsage> {
         Family::Claude => super::claude::extract_usage(raw),
         Family::Gemini => super::gemini::extract_usage(raw),
         Family::Copilot => super::copilot::extract_usage(raw),
+        Family::SystemOne => None,
     }
 }
 
