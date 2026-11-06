@@ -41,7 +41,17 @@ webbrowser = { version = "1", features = ["hardened"] }
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 # copilot — the OFFICIAL GitHub Copilot agent runtime SDK (github/ org, MIT).
 # Drives the Copilot runtime binary over JSON-RPC (stdio).
-github-copilot-sdk = "1.0"
+#
+# `default-features = false` DISABLES `bundled-cli`: the SDK's default build
+# embeds the entire Copilot CLI (~130 MB archive, ~198 MB unpacked) plus the
+# Node runtime (~67 MB) INSIDE this library via `include_bytes!`, inflating
+# every downstream binary by ~200 MB. With only the `runtime` feature the
+# build script downloads the runtime ONCE into a per-user cache (~/.cache/…)
+# and the SDK resolves it from there at run time (`CliProgram::Resolve`), the
+# same resolution path as the bundled build — zero payload inside the binary.
+# To skip even the build-time download, set COPILOT_SKIP_CLI_DOWNLOAD=1 and
+# provide the binary via COPILOT_CLI_PATH / `CliProgram::Path`.
+github-copilot-sdk = { version = "1.0", default-features = false, features = ["runtime"] }
 directories = "6.0.0"
 zeroize = { version = "=1.7", features = ["derive"] }
 keyring = { version = "4.1.6", features = [
