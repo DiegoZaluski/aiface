@@ -164,6 +164,55 @@ pub async fn send_request_retrying(
     Ok(text)
 }
 
+/// Binary-body twin of [`send_request_retrying`]: identical request shape,
+/// retry wiring and error classification, but the success body is consumed
+/// as RAW BYTES instead of text. Needed for endpoints whose 200 body is
+/// binary (Venice `/audio/speech` returns raw audio) — routing those bytes
+/// through `String` would corrupt them via lossy UTF-8 conversion.
+///
+/// Returns the bytes plus the response's `Content-Type` header value (used
+/// by the caller to type the payload; the header is read BEFORE the body is
+/// consumed).
+pub(crate) async fn send_request_retrying_bytes(
+    config: &ProviderConfig,
+    url: &str,
+    body: &(impl serde::Serialize + Sync),
+    headers: &[(&str, String)],
+    retry_enabled: bool,
+    max_retries: Option<usize>,
+    retry_delay_override: Option<Duration>,
+) -> Result<(Vec<u8>, Option<String>), ConnectorError> {
+    let json_body = serde_json::to_string(body)?;
+    let mut request_builder = apply_provider_headers(
+        shared_client()
+            .post(url)
+            .header("Content-Type", "application/json"),
+        config,
+    );
+    for (key, value) in headers {
+        request_builder = request_builder.header(*key, value.as_str());
+    }
+    let max_retries = if retry_enabled {
+        max_retries
+    } else {
+        Some(0)
+    };
+    let response =
+        send_with_retry(&request_builder, json_body, retry_delay_override, max_retries).await?;
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    // Non-streaming call: the whole body must arrive within the request
+    // timeout (the stream path governs the body via per-chunk timeouts).
+    let bytes = tokio::time::timeout(Duration::from_mins(1), response.bytes())
+        .await
+        .map_err(|_| ConnectorError::Network("request timed out after 60s".to_string()))??
+        .to_vec();
+    Ok((bytes, content_type))
+}
+
 pub async fn send_get_request(
     config: &ProviderConfig,
     url: &str,

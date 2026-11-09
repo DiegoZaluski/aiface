@@ -44,7 +44,10 @@ pub use decision::{
     DecisionAnswer, DecisionOutput, DecisionQuestion, DecisionRequest, Probabilities,
     ProbabilitySource,
 };
-pub use output::{ChatOutput, ChatStream, GeneratedImage, ImageOutput, LsOutput, ModelInfo, StreamChunk};
+pub use output::{
+    AudioOutput, ChatOutput, ChatStream, GeneratedAudio, GeneratedImage, ImageOutput, LsOutput,
+    ModelInfo, StreamChunk,
+};
 pub use provider::Family;
 // Re-exported so `Connector::token_usage` consumers name the type without
 // reaching into the private claude module path.

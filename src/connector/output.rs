@@ -1082,3 +1082,76 @@ impl ImageOutput {
         self.images.first()
     }
 }
+
+/// One synthesized speech clip, normalized across providers.
+///
+/// The only provider with a speech surface today is Venice
+/// (`/audio/speech`, see the `openai_compatible::speech` module doc): a
+/// successful response is a RAW BINARY audio body, so unlike
+/// [`GeneratedImage`] there is no decoding step — the bytes arrive decoded
+/// and are carried verbatim, typed by the response `Content-Type`.
+#[derive(Clone, Debug)]
+pub struct GeneratedAudio {
+    bytes: Vec<u8>,
+    mime_type: String,
+}
+
+impl GeneratedAudio {
+    pub(crate) fn new(bytes: Vec<u8>, mime_type: String) -> Self {
+        Self { bytes, mime_type }
+    }
+
+    /// Audio bytes, ready to write to a file (the format matches
+    /// [`mime_type`](Self::mime_type) — `mp3`, `wav`, `opus`).
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// MIME type of [`bytes`](Self::bytes) (`audio/mpeg`, `audio/wav`, …).
+    #[must_use]
+    pub fn mime_type(&self) -> &str {
+        &self.mime_type
+    }
+
+    /// File extension matching the MIME type (`mp3`, `wav`, `pcm`, `opus`,
+    /// `aac`, `flac`). Sane default for naming the output; falls back to
+    /// `mp3`, the family's dominant output format. Matched on the FULL
+    /// type — an unrecognized subtype must never leak through as a file
+    /// extension.
+    #[must_use]
+    pub fn extension(&self) -> &str {
+        match self.mime_type.as_str() {
+            "audio/wav" => "wav",
+            "audio/pcm" => "pcm",
+            "audio/opus" => "opus",
+            "audio/aac" => "aac",
+            "audio/flac" => "flac",
+            // `audio/mpeg` and anything unrecognized.
+            _ => "mp3",
+        }
+    }
+}
+
+/// Result of a [`Connector::generate_speech`](crate::connector::Connector::generate_speech)
+/// call.
+///
+/// Text-to-speech is single-shot (one input, one clip), so unlike
+/// [`ImageOutput`] there is exactly one clip per call —
+/// [`audio`](AudioOutput::audio) always yields it.
+#[derive(Debug)]
+pub struct AudioOutput {
+    audio: GeneratedAudio,
+}
+
+impl AudioOutput {
+    pub(crate) fn new(audio: GeneratedAudio) -> Self {
+        Self { audio }
+    }
+
+    /// The synthesized clip.
+    #[must_use]
+    pub fn audio(&self) -> &GeneratedAudio {
+        &self.audio
+    }
+}

@@ -3,7 +3,7 @@ use super::cost::{CostError, ProviderCost, provider_session_cost};
 use super::decision::DecisionRequest;
 use super::economy;
 use super::error::ConnectorError;
-use super::output::{ChatOutput, ChatStream, ImageOutput, LsOutput};
+use super::output::{AudioOutput, ChatOutput, ChatStream, ImageOutput, LsOutput};
 use super::params::{ChatMessage, Parameters, ResponseFormat, ToolCallMode, ToolDefinition};
 use super::provider::{Family, ProviderConfig, get_provider};
 
@@ -545,6 +545,64 @@ impl Connector {
             // The System One family's only surface is decisions.
             Family::SystemOne => Err(ConnectorError::NotImplemented(
                 "image generation on a decision provider",
+            )),
+        }
+    }
+
+    /// Generate speech (text-to-speech) from text.
+    ///
+    /// Voice generation is supported ONLY on the `venice` provider —
+    /// Venice ships an OpenAI-compatible `/audio/speech` route
+    /// (`POST {base}/audio/speech`, docs.venice.ai); no other provider
+    /// this connector serves documents a TTS surface, so every other one
+    /// returns `NotImplemented` BEFORE any request is sent. The speech
+    /// model follows [`with_model`](Self::with_model) when set
+    /// (Venice's default is `tts-kokoro`); there are no voice/format/speed
+    /// knobs yet — the model's documented defaults apply.
+    ///
+    /// ```no_run
+    /// # use aiface::connector::Connector;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let out = Connector::new("venice")?
+    ///     .with_model("tts-kokoro")
+    ///     .with_api_key("vk-...")
+    ///     .generate_speech("Hello from aiface.")
+    ///     .await?;
+    /// let clip = out.audio();
+    /// std::fs::write(format!("out.{}", clip.extension()), clip.bytes())?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `NotImplemented` for every provider except `venice`,
+    /// `InvalidInput` when the text is empty or exceeds Venice's 4096
+    /// character cap (both checked locally, before any request),
+    /// `MissingApiKey` if no API key is found, `HttpError` on non-2xx
+    /// status, `Deserialization` if the response carries no audio bytes,
+    /// or `Network` on transport failure.
+    pub async fn generate_speech(&self, text: &str) -> Result<AudioOutput, ConnectorError> {
+        let provider = self.provider()?;
+        let service = self.params.service_keyring.as_deref();
+        // Venice-only by design: it is the one provider with a documented
+        // speech surface. There is no reliable "which family member am I"
+        // signal in the family match itself, so the gate reads the
+        // registry name.
+        if provider.name != "venice" {
+            return Err(ConnectorError::NotImplemented(
+                "speech generation on this provider (text-to-speech is supported only on venice)",
+            ));
+        }
+        match provider.family {
+            Family::OpenAICompatible => {
+                openai_compatible::generate_speech(provider, &self.params, text, service).await
+            }
+            // Unreachable while the name gate holds (venice is always
+            // OpenAICompatible) — kept as a guard so a future registry
+            // change cannot silently skip the family check.
+            _ => Err(ConnectorError::NotImplemented(
+                "speech generation on this provider (text-to-speech is supported only on venice)",
             )),
         }
     }

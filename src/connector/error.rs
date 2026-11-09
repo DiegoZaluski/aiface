@@ -56,6 +56,12 @@ pub enum ConnectorError {
     /// score levels, ...). Raised BEFORE the request is sent — the contract
     /// is checked locally first.
     InvalidQuestion(String),
+    /// A request the caller controls is locally invalid for the surface it
+    /// targets (e.g. empty or over-length TTS input). Raised BEFORE the
+    /// request is sent — the check is local, the failure is a caller bug,
+    /// and spending a provider round trip would only relay the same
+    /// rejection with a 400.
+    InvalidInput(String),
     /// A decision answer broke the schema the caller declared: wrong answer
     /// type for the question, an option the question never declared
     /// (hallucinated by an LLM wrapper, or a contract break from a native
@@ -307,6 +313,7 @@ impl fmt::Display for ConnectorError {
             Self::NoEmbeddings => write!(f, "No embeddings in response"),
             Self::NotImplemented(feature) => write!(f, "{feature} is not yet implemented"),
             Self::InvalidQuestion(detail) => write!(f, "Invalid decision question: {detail}"),
+            Self::InvalidInput(detail) => write!(f, "Invalid input: {detail}"),
             Self::DecisionSchemaViolation { question, detail } => {
                 write!(f, "Decision schema violation for `{question}`: {detail}")
             }

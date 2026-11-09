@@ -12,6 +12,7 @@ pub(crate) mod list_models;
 pub(crate) mod openai;
 pub(crate) mod provider;
 pub(crate) mod retry;
+pub(crate) mod speech;
 pub(crate) mod streaming;
 pub(crate) mod venice;
 
