@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "aiface"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-stream",
  "base64 0.22.1",
