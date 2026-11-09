@@ -34,6 +34,12 @@ Every `with_*` method returns `Self` (builder style) and is `#[must_use]`:
 | `with_tool_choice` | `serde_json::Value` | `"auto"`, `"none"`, specific tool |
 | `with_reasoning_effort` | `impl Into<String>` | `"low"`/`"medium"`/`"high"`; mapped per family |
 | `with_user` | `impl Into<String>` | end-user id for monitoring |
+| `with_session_id` | `impl Into<String>` | cache-affinity routing (`x-session-id`/`x-session-affinity`) |
+| `with_prompt_cache` | `bool` | Claude prompt caching (default enabled) |
+| `with_image_count` | `u32` | images per `generate_image` call (provider caps apply) |
+| `with_image_size` | `impl Into<String>` | verbatim: pixels (OpenAI/xAI), aspect ratio (Gemini) |
+| `with_image_quality` | `impl Into<String>` | verbatim tier: `low/medium/high`, `hd`, `1K/2K/4K` |
+| `with_image_response_format` | `impl Into<String>` | override the Images carrier (`"b64_json"`/`"url"`) |
 | `with_base_url` | `impl Into<String>` | override the endpoint |
 | `with_api_key` | `impl Into<String>` | explicit key (highest priority) |
 | `with_service_keyring` | `impl Into<String>` | keyring service override (default `"cosh"`) |
@@ -53,6 +59,8 @@ the request is validated against the provider at call time, not build time.
 | `stream_chat_with_system_no_tools(prompt, system)` | `Result<ChatStream>` | tools stripped from the request |
 | `stream_chat_with_messages(system, &[ChatMessage])` | `Result<ChatStream>` | full message history with tool-call roles |
 | `list_models()` | `Result<LsOutput>` | available models from the provider |
+| `generate_image(prompt)` | `Result<ImageOutput>` | images on providers that offer generation (decoded bytes) |
+| `session_cost(&[f64])` | `Result<ProviderCost>` | the provider's OWN reported spend for a session (no local estimate) |
 
 **`stream_chat_with_system_no_tools`** exists for a specific reason: a
 sub-agent (e.g. the summarizer) must never see the main loop's tool schemas,

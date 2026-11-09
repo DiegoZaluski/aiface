@@ -183,5 +183,69 @@ async fn main() -> Result<(), ConnectorError> {
         Connector::new("openai")?.tokens(raw)
     );
     println!();
+
+    // ── 8. Multimodal: send, generate and receive images ────────────────────
+    // All three flows, offline where possible; the live ones degrade
+    // gracefully without an API key.
+    println!("== 8. images (send / generate / receive) ==");
+
+    // SEND: an ImageBlock carries inline base64 bytes on the message
+    // channel — each family lowers it to its native image part.
+    let png_bytes: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    let mut vision_msg = user_message("What is in this picture?");
+    vision_msg.images = Some(vec![aiface::connector::ImageBlock::png(png_bytes)]);
+    // The images field is transport-only (`skip_serializing`): the caller
+    // lowers it to the provider's native image parts right before the
+    // request, so the typed struct serializes as plain text.
+    println!(
+        "  vision message carries {} image block(s); wire lowering happens in the caller",
+        vision_msg.images.as_ref().map_or(0, Vec::len)
+    );
+
+    // GENERATE: the dedicated Images route, per provider capability.
+    match Connector::new("openai") {
+        Ok(live) => match live
+            .with_model("gpt-image-1")
+            .with_image_size("1024x1024")
+            .with_image_quality("low")
+            .generate_image("a red panda eating bamboo, watercolor")
+            .await
+        {
+            Ok(out) => {
+                if let Some(img) = out.first() {
+                    let path = format!("panda.{}", img.extension());
+                    let _ = std::fs::write(&path, img.bytes());
+                    println!("  generate_image: wrote {path} ({} bytes)", img.bytes().len());
+                }
+            }
+            Err(err) => println!("  generate_image skipped: {err}"),
+        },
+        Err(err) => println!("  generate_image skipped: {err}"),
+    }
+
+    // RECEIVE: chat answers can EMBED images (Gemini image models,
+    // OpenRouter-style gateways, OpenAI's Responses image_generation tool).
+    match Connector::new("gemini") {
+        Ok(live) => match live
+            .with_model("gemini-2.5-flash-image")
+            .chat("Draw a red panda")
+            .await
+        {
+            Ok(reply) => {
+                println!(
+                    "  chat images: {} (text: {:.40})",
+                    reply.images().len(),
+                    reply.message()
+                );
+                for (i, img) in reply.images().iter().enumerate() {
+                    let path = format!("answer-{i}.{}", img.extension());
+                    let _ = std::fs::write(&path, img.bytes());
+                }
+            }
+            Err(err) => println!("  chat-image skipped: {err}"),
+        },
+        Err(err) => println!("  chat-image skipped: {err}"),
+    }
+    println!();
     Ok(())
 }

@@ -12,6 +12,7 @@ pub struct ChatMessage {
     pub content: Option<String>,
     pub tool_calls: Option<Vec<ToolCallMsg>>,    // assistant-only
     pub tool_call_id: Option<String>,            // tool-result-only
+    pub images: Option<Vec<ImageBlock>>,         // inline image bytes (multimodal input)
     pub thinking_blocks: Option<Vec<ClaudeThinkingBlock>>,  // Claude-only transport detail
 }
 ```
@@ -84,6 +85,40 @@ connector.with_tool_choice(serde_json::json!(ToolName));  // force specific tool
 - Hand the `Vec<ToolDefinition>` to [`Connector::with_tools`](client.md) or
   `set_tools`, and control selection with `with_tool_choice` (`"auto"`,
   `"none"`, or a specific tool name).
+
+## `ImageBlock` — inline image input
+
+An image attached to a chat message, carried as base64 bytes (no file
+references). Each provider caller lowers it to its native image part —
+`image_url` data-URIs on the OpenAI-shaped surfaces, `inlineData` parts
+on Gemini, `source.base64` blocks on Claude — and `skip_serializing_if`
+keeps it off wire formats that have no image slot (text-only backends
+gracefully degrade to the message's text content).
+
+```rust,ignore
+pub struct ImageBlock {
+    pub media_type: String,   // IANA media type, e.g. "image/png"
+    pub data: String,         // base64, standard alphabet, padded
+}
+
+impl ImageBlock {
+    pub fn png(bytes: &[u8]) -> Self                     // encodes raw PNG bytes
+    pub fn encoded(media_type: &str, data: impl Into<String>) -> Result<Self, String>
+}
+```
+
+```rust,ignore
+// Attach a screenshot to a tool result so a VLM can see it:
+let png_bytes = std::fs::read("screen.png")?;
+let msg = tool_result_message_with_images(
+    call_id,
+    "screenshot 1568x882",
+    vec![ImageBlock::png(&png_bytes)],
+);
+```
+
+Note this is the INPUT channel. Images the model puts in its ANSWER
+arrive decoded on [`ChatOutput::images`](output.md).
 
 ## `ResponseFormat` — structured output
 
