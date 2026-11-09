@@ -245,9 +245,89 @@ fn decode_b64(payload: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("image payload is not valid base64: {e}"))
 }
 
+/// Extract images a chat ANSWER carries (multi-modal output): every
+/// `inlineData{mimeType, data}` part across all candidates of a
+/// `generateContent` response, base64-decoded.
+///
+/// SAFETY states that yield no image are simply absent here — the answer's
+/// text survives and `ChatOutput::images` stays empty for a fully
+/// withheld turn (same semantics as the dedicated `generate_image`
+/// path: a withheld generation is a normal answer, not an error).
+/// `thought: true` parts carry no `inlineData` by construction, so the
+/// filter is implicit.
+pub(crate) fn extract_output_images(raw: &str) -> Vec<GeneratedImage> {
+    let Ok(parsed) = serde_json::from_str::<ImageGenerateResponse>(raw) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for candidate in &parsed.candidates {
+        if candidate
+            .finish_reason
+            .as_deref()
+            .is_some_and(|r| r != "STOP")
+        {
+            continue;
+        }
+        let Some(content) = &candidate.content else {
+            continue;
+        };
+        for part in &content.parts {
+            let Some(inline) = &part.inline_data else {
+                continue;
+            };
+            let Ok(bytes) = decode_b64(&inline.data) else {
+                continue;
+            };
+            out.push(GeneratedImage::new(
+                bytes,
+                inline
+                    .mime_type
+                    .clone()
+                    .unwrap_or_else(|| "image/png".to_string()),
+                None,
+                raw.to_string(),
+            ));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod image_tests {
     use super::*;
+
+    #[test]
+    fn chat_answer_images_parse_from_inline_parts() {
+        let json = r#"{"candidates":[{"finishReason":"STOP","content":{"parts":[
+            {"text":"here"},
+            {"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}},
+            {"inlineData":{"mimeType":"image/jpeg","data":"aGVsbG8="}}
+        ]}}]}"#;
+        let out = extract_output_images(json);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].mime_type(), "image/png");
+        assert_eq!(out[0].bytes(), b"hello");
+        assert_eq!(out[1].mime_type(), "image/jpeg");
+    }
+
+    #[test]
+    fn chat_answer_withheld_candidates_are_skipped() {
+        // A non-STOP finish reason means the image was withheld — the
+        // candidate contributes nothing (text answers survive separately).
+        let json = r#"{"candidates":[{"finishReason":"IMAGE_SAFETY","content":{"parts":[
+            {"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}}
+        ]}}]}"#;
+        assert!(extract_output_images(json).is_empty());
+    }
+
+    #[test]
+    fn chat_answer_text_only_is_empty() {
+        let json = r#"{"candidates":[{"finishReason":"STOP","content":{"parts":[
+            {"text":"just words"}
+        ]}}]}"#;
+        assert!(extract_output_images(json).is_empty());
+        assert!(extract_output_images("not json").is_empty());
+    }
 
     #[test]
     fn parses_inline_data_part() {

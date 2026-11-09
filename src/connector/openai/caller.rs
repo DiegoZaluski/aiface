@@ -3,9 +3,10 @@ use super::super::common::{
     send_request, send_request_stream, send_with_retry, shared_client,
 };
 use super::super::error::ConnectorError;
-use super::super::output::{ChatOutput, ChatStream, StreamChunk};
+use super::super::output::{ChatOutput, ChatStream, GeneratedImage, StreamChunk};
 use super::super::params::{ChatMessage, Parameters, ToolCallMode};
 use super::super::provider::{ProviderConfig, get_api_key, is_local_provider};
+use base64::Engine as _;
 use crate::connector::NativeToolCall;
 
 use async_stream::stream;
@@ -661,6 +662,52 @@ fn process_sse_response(
 
 // ── Callers ──────────────────────────────────────────────────────────────
 
+/// Extract images a chat ANSWER carries (Responses API): the `result`
+/// base64 of every `image_generation_call` output item — the bytes the
+/// `image_generation` tool produced inside the response.
+///
+/// OpenAI first-party NEVER returns images in chat messages (assistant
+/// content is text/refusal only, per the schema dumps of every SDK) —
+/// the only inline-in-response surface is this tool output item. A
+/// `result` is `null` until the call completes; incomplete/failed items
+/// simply contribute nothing.
+pub(crate) fn extract_output_images(raw: &str) -> Vec<GeneratedImage> {
+    let parsed: Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let Some(output) = parsed.get("output").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for item in output {
+        if item.get("type").and_then(Value::as_str) != Some("image_generation_call") {
+            continue;
+        }
+        let Some(result) = item.get("result").and_then(Value::as_str) else {
+            continue;
+        };
+        let mime = item
+            .get("output_format")
+            .and_then(Value::as_str)
+            .map_or_else(
+                || "image/png".to_string(),
+                |fmt| format!("image/{fmt}"),
+            );
+        // `result` is bare standard base64 (no data-URI prefix, per the
+        // Responses API reference's image_generation_call item schema).
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(result) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::debug!("skipping undecodable image_generation_call result: {e}");
+                continue;
+            }
+        };
+        out.push(GeneratedImage::new(bytes, mime, None, raw.to_string()));
+    }
+    out
+}
+
 /// Extract the visible text of a non-streaming Responses response: the
 /// `output_text` blocks of every `message` item, in order.
 fn response_text(response: &ResponsesResponse) -> Option<String> {
@@ -734,7 +781,11 @@ pub async fn chat(
         }
     };
     let message = response_text(&parsed).ok_or(ConnectorError::NoContent)?;
-    Ok(ChatOutput { raw, message })
+    // The `image_generation` tool, when enabled, delivers its output as
+    // `image_generation_call` items in the same response — extract them
+    // alongside the text.
+    let images = extract_output_images(&raw);
+    Ok(ChatOutput { raw, message, images })
 }
 
 /// Build and send a streaming Responses request, returning the parsed stream.
@@ -832,4 +883,42 @@ pub async fn chat_stream_with_messages(
     // API key; the Responses wire format has no `thought_signature` /
     // `thinking_blocks` fields, and `message_to_input_items` ignores them.
     stream_responses(config, params, system, messages.to_vec(), service).await
+}
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    #[test]
+    fn chat_answer_images_parse_from_image_generation_calls() {
+        let json = r#"{"output":[
+            {"type":"reasoning","summary":[]},
+            {"type":"message","content":[{"type":"output_text","text":"done"}]},
+            {"type":"image_generation_call","result":"aGVsbG8=","output_format":"png"},
+            {"type":"image_generation_call","result":"aGVsbG8=","output_format":"webp"}
+        ]}"#;
+        let out = extract_output_images(json);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].mime_type(), "image/png");
+        assert_eq!(out[0].bytes(), b"hello");
+        assert_eq!(out[1].mime_type(), "image/webp");
+    }
+
+    #[test]
+    fn chat_answer_incomplete_calls_contribute_nothing() {
+        // `result` is null until the call completes; failed items too.
+        let json = r#"{"output":[
+            {"type":"image_generation_call","result":null,"status":"in_progress"},
+            {"type":"image_generation_call"}
+        ]}"#;
+        assert!(extract_output_images(json).is_empty());
+    }
+
+    #[test]
+    fn chat_answer_plain_responses_are_empty() {
+        let json = r#"{"output":[{"type":"message","content":[
+            {"type":"output_text","text":"words"}
+        ]}]}"#;
+        assert!(extract_output_images(json).is_empty());
+        assert!(extract_output_images("not json").is_empty());
+    }
 }

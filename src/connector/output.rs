@@ -15,6 +15,11 @@ use tokio_stream::Stream;
 pub struct ChatOutput {
     pub(crate) raw: String,
     pub(crate) message: String,
+    /// Images the model embedded in its ANSWER (multi-modal output —
+    /// Gemini image models, gateways that normalize the OpenRouter
+    /// `message.images[]` shape). Empty for text-only replies; the common
+    /// path pays nothing.
+    pub(crate) images: Vec<GeneratedImage>,
 }
 
 impl ChatOutput {
@@ -35,6 +40,26 @@ impl ChatOutput {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// Images the model generated INTO its chat answer, decoded.
+    ///
+    /// Multi-modal OUTPUT is a per-provider capability, not a universal
+    /// one: Gemini image models return `inlineData` parts inside the
+    /// normal response; OpenRouter (and gateways that follow its
+    /// normalization) carry data-URI images in `message.images[]`. OpenAI
+    /// first-party never returns images in chat — its surface is the
+    /// Responses-API image-generation tool or `/v1/images/generations`
+    /// (see [`Connector::generate_image`]). A text-only reply leaves this
+    /// empty, so `images().is_empty()` is the check for "no image in this
+    /// turn" — the same empty-output contract as `generate_image` safety
+    /// blocks.
+    ///
+    /// The bytes are already DECODED (no data-URI prefix, no expiring
+    /// URL) — write [`bytes`](GeneratedImage::bytes) straight to a file.
+    #[must_use]
+    pub fn images(&self) -> &[GeneratedImage] {
+        &self.images
     }
 
     /// The REAL cost (USD) the provider reported inside this response, if
@@ -228,6 +253,11 @@ pub struct ChatStream {
     /// seen. Decreases as requests spend; the user-facing ◆ figure. Cleared
     /// on the retry middleware's reset marker.
     remaining_credits: Option<f64>,
+    /// Images the model generated INTO this answer, accumulated per frame
+    /// (multi-modal output — see [`ChatOutput::images`]). Appended in wire
+    /// order; cleared on the retry middleware's reset marker so a
+    /// re-streamed attempt starts fresh.
+    images: Vec<GeneratedImage>,
     family: Family,
     finished: bool,
 }
@@ -244,6 +274,7 @@ impl ChatStream {
             reported_cost: None,
             reported_cost_credits: None,
             remaining_credits: None,
+            images: Vec::new(),
             family,
             finished: false,
         }
@@ -314,6 +345,22 @@ impl ChatStream {
         self.remaining_credits
     }
 
+    /// Returns images the model generated INTO this streamed answer.
+    ///
+    /// If the stream hasn't been fully consumed yet, this drains any
+    /// remaining items first. Images arrive embedded in the frames'
+    /// native shapes (see [`ChatOutput::images`]) and are accumulated in
+    /// wire order, deduped by byte identity (some providers re-send
+    /// already-streamed parts on later frames).
+    #[must_use]
+    pub async fn images(&mut self) -> &[GeneratedImage] {
+        if !self.finished {
+            use tokio_stream::StreamExt;
+            while self.next().await.is_some() {}
+        }
+        &self.images
+    }
+
     /// Returns the last raw SSE frame received from the stream.
     ///
     /// If the stream hasn't been fully consumed yet, this drains any
@@ -350,12 +397,31 @@ impl Stream for ChatStream {
                 self.reported_cost = None;
                 self.reported_cost_credits = None;
                 self.remaining_credits = None;
+                self.images.clear();
             } else {
                 if let Some(u) = extract_family_usage(self.family, &chunk.raw) {
                     self.usage = Some(match self.usage {
                         Some(prev) => prev.merge_stream(u),
                         None => u,
                     });
+                }
+                // Images the model generated into this answer: append
+                // whatever THIS frame carries (a multi-image answer spans
+                // several frames; most frames carry none). The substring
+                // pre-gate skips the JSON parse entirely on text-traffic
+                // frames — every marker any family extractor reads.
+                if chunk.raw.contains("inlineData")
+                    || chunk.raw.contains("images")
+                    || chunk.raw.contains("image_generation_call")
+                {
+                    // Frames repeat the accumulated response on some
+                    // gateways, so dedupe by decoded byte identity — keep
+                    // first occurrence.
+                    for image in extract_family_images(self.family, &chunk.raw) {
+                        if !self.images.iter().any(|prev| prev.bytes == image.bytes) {
+                            self.images.push(image);
+                        }
+                    }
                 }
                 // Reported cost only ever arrives on the FINAL frame and only
                 // grows within one request, so keep the max seen. Stays `None`
@@ -406,6 +472,35 @@ fn extract_family_usage(family: Family, raw: &str) -> Option<TokenUsage> {
         Family::Gemini => super::gemini::extract_usage(raw),
         Family::Copilot => super::copilot::extract_usage(raw),
         Family::SystemOne => None,
+    }
+}
+
+/// Extract images the model embedded in a chat ANSWER from a raw
+/// response/SSE frame, per family.
+///
+/// Family-specific on purpose — the three wire shapes that can carry an
+/// image are structurally different:
+///
+/// - `OpenAi` (Responses API): `output[]` items of
+///   `type: "image_generation_call"` with a base64 `result` (the
+///   `image_generation` tool fired inside the response).
+/// - `Gemini`: `candidates[].content.parts[].inlineData{mimeType, data}`
+///   base64 parts (image-capable models answer with interleaved
+///   text/image parts).
+/// - `OpenAICompatible`: the OpenRouter normalization —
+///   `choices[].message.images[]` entries whose `image_url.url` is a
+///   data-URI (Vercel AI Gateway, LiteLLM and other gateways follow this
+///   shape for image models). Bare http(s) URLs are NEVER fetched
+///   (unauthenticated egress, same policy as the Images API path).
+///
+/// Families with no image-output surface (`Claude`, `Copilot`,
+/// `SystemOne`) return an empty vec without parsing.
+pub(crate) fn extract_family_images(family: Family, raw: &str) -> Vec<GeneratedImage> {
+    match family {
+        Family::OpenAi => super::openai::extract_output_images(raw),
+        Family::Gemini => super::gemini::extract_output_images(raw),
+        Family::OpenAICompatible => super::openai_compatible::extract_output_images(raw),
+        Family::Claude | Family::Copilot | Family::SystemOne => Vec::new(),
     }
 }
 

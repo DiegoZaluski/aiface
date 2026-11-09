@@ -6,6 +6,7 @@ pub(crate) mod embeddings;
 pub(crate) mod economy;
 pub(crate) mod gateways;
 pub(crate) mod gemini;
+pub(crate) mod chat_images;
 pub(crate) mod images;
 pub(crate) mod list_models;
 pub(crate) mod openai;

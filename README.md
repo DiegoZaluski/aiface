@@ -31,7 +31,10 @@ chat, tool calling, embeddings, token usage and cost tracking.
   channel; `generate_image` produces images on the providers that offer
   image generation (OpenAI-shaped `/images/generations` surfaces —
   OpenAI, xAI, Together, Venice, … — and Gemini's image models), with
-  bytes decoded and ready to save.
+  bytes decoded and ready to save. Chat answers that EMBED images
+  (Gemini image models, OpenRouter-style gateways, OpenAI's Responses
+  `image_generation` tool) surface decoded bytes on
+  `ChatOutput::images` / `ChatStream::images`.
 - **System One decisions** — typed decisions with probabilities from
   decision models (TypeSafe Jev, Microsoft-Decision-1, OpenRouter's
   System One route) or wrapped LLMs, under one `Connector::decide`

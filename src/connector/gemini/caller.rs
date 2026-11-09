@@ -778,8 +778,11 @@ pub async fn chat(
     let chat_response: GenerateContentResponse = serde_json::from_str(&response_text)?;
     let message = extract_response_text(&chat_response)?;
     Ok(ChatOutput {
-        raw: response_text,
+        raw: response_text.clone(),
         message,
+        // Image-capable Gemini models answer with interleaved text/image
+        // parts; a text-only model parses to an empty vec here.
+        images: super::images::extract_output_images(&response_text),
     })
 }
 

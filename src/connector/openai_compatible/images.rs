@@ -25,6 +25,7 @@ use super::super::output::{GeneratedImage, ImageOutput};
 use super::super::params::Parameters;
 use super::super::provider::ProviderConfig;
 use base64::Engine as _;
+use serde_json::Value;
 use super::caller::{resolve_api_key, resolve_base_url};
 
 /// Request body for `POST /images/generations`. `skip_serializing_if`
@@ -181,6 +182,62 @@ pub(crate) fn images_from_openai_json(response_text: &str) -> Result<ImageOutput
     Ok(ImageOutput::new(images))
 }
 
+/// Extract images a chat ANSWER carries (OpenRouter-style normalization:
+/// `choices[].message.images[]` with data-URI `image_url.url` entries —
+/// the shape OpenRouter, Vercel AI Gateway and LiteLLM serve for
+/// image-capable models). On STREAMED frames the same entries ride
+/// `choices[].delta.images[]` instead of `message` — both locations are
+/// read so the streaming and non-streaming paths of one family agree.
+/// Returns every decodable image in wire order.
+///
+/// Live http(s) `url` entries are skipped, never fetched — the same
+/// no-egress policy as the Images API path (the answer's text survives;
+/// only the pixels the gateway did not inline are absent).
+pub(crate) fn extract_output_images(raw: &str) -> Vec<GeneratedImage> {
+    let parsed: Value = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for choice in parsed
+        .get("choices")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        // Non-streaming: `message.images`. Streaming: `delta.images`
+        // (same entry shape, different carrier — OpenRouter/Vercel docs).
+        let message = choice.get("message").or_else(|| choice.get("delta"));
+        let images = message.and_then(|m| m.get("images")).and_then(Value::as_array);
+        for image in images.into_iter().flatten() {
+            let Some(url) = image
+                .get("image_url")
+                .and_then(|u| u.get("url"))
+                .and_then(Value::as_str)
+            else {
+                continue;
+            };
+            if url.starts_with("http://") || url.starts_with("https://") {
+                log::debug!(
+                    "chat answer carried a hosted image URL instead of inline bytes; \
+                     not fetched (no unauthenticated egress)"
+                );
+                continue;
+            }
+            let Ok(bytes) = decode_b64(url) else {
+                continue;
+            };
+            out.push(GeneratedImage::new(
+                bytes,
+                sniff_mime(url),
+                None,
+                raw.to_string(),
+            ));
+        }
+    }
+    out
+}
+
 /// Decode a base64 payload, tolerating the data-URI prefix
 /// (`data:image/png;base64,…`) some gateways send in `url` fields.
 fn decode_b64(payload: &str) -> Result<Vec<u8>, String> {
@@ -306,6 +363,48 @@ mod image_tests {
         let json = r#"{"data":[{"b64_json":"aGVsbG8=","revised_prompt":"a better prompt"}]}"#;
         let out = images_from_openai_json(json).unwrap();
         assert_eq!(out.first().unwrap().revised_prompt(), Some("a better prompt"));
+    }
+
+    #[test]
+    fn chat_answer_images_parse_from_openrouter_shape() {
+        // OpenRouter/Vercel/LiteLLM normalization: images ride the message.
+        // The data URI carries image/webp, but the payload is too short to
+        // satisfy the sniff window — PNG is the documented fallback.
+        let json = r#"{"choices":[{"message":{"content":"here","images":[
+            {"type":"image_url","image_url":{"url":"data:image/webp;base64,"}}
+        ]}}]}"#;
+        let out = extract_output_images(json);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].mime_type(), "image/png");
+    }
+
+    #[test]
+    fn chat_answer_hosted_urls_are_skipped_not_fetched() {
+        let json = r#"{"choices":[{"message":{"images":[
+            {"image_url":{"url":"https://cdn.example.com/img.png"}}
+        ]}}]}"#;
+        assert!(extract_output_images(json).is_empty());
+    }
+
+    #[test]
+    fn chat_answer_without_images_is_empty() {
+        assert!(
+            extract_output_images(r#"{"choices":[{"message":{"content":"hi"}}]}"#).is_empty()
+        );
+        assert!(extract_output_images("not json").is_empty());
+    }
+
+    #[test]
+    fn streamed_delta_images_parse_like_message_images() {
+        // OpenRouter/Vercel streaming: the SAME entry shape rides
+        // `delta.images` instead of `message.images`.
+        let json = r#"{"choices":[{"delta":{"images":[
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,aGVsbG8="}}
+        ]}}]}"#;
+        let out = extract_output_images(json);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].bytes(), b"hello");
+        assert_eq!(out[0].mime_type(), "image/png");
     }
 
     #[test]

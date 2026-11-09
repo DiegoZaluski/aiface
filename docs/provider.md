@@ -171,6 +171,31 @@ connector does not use). `with_image_quality` carries the resolution
 tier (`"1K"`/`"2K"`/`"4K"`) on quality-tiered models — the billed tier
 defaults to the model's `defaultQuality` when unset.
 
+### Images in chat answers (multi-modal output)
+
+Chat responses can EMBED images in the answer itself, per family:
+
+- **Gemini** — image-capable models (`gemini-2.5-flash-image`, …)
+  answer `generateContent` with interleaved text/`inlineData` parts;
+  every image arrives decoded on `ChatOutput::images` (and
+  `ChatStream::images` for streams, accumulated in wire order and
+  deduped — the final frame re-sends earlier parts). A withheld
+  generation (`finishReason != "STOP"`) contributes nothing; the
+  answer's text survives.
+- **OpenRouter-style gateways** — the `message.images[]`
+  normalization (data-URI `image_url.url`) is parsed for the whole
+  `OpenAICompatible` family; servers that don't send it parse to an
+  empty vec. Live http(s) URLs are never fetched (no unauthenticated
+  egress) — the pixels must arrive inline.
+- **OpenAI** — chat messages never carry images (assistant content is
+  text/refusal only); the inline-in-response surface is the Responses
+  API's `image_generation` tool, whose `image_generation_call` output
+  items surface on `images()` too.
+
+Families with no image-output surface (Claude, Copilot) always yield an
+empty `images()` — `is_empty()` is the "no image this turn" check, the
+same contract as `generate_image` safety blocks.
+
 ## The Bedrock provider (`bedrock`) — region-templated base URL
 
 `bedrock` joins the OpenAI-compatible family through Amazon Bedrock's official

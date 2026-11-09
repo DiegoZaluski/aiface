@@ -16,4 +16,5 @@ pub mod caller;
 pub mod tokens;
 
 pub use caller::{chat, chat_stream, chat_stream_with_messages};
+pub(crate) use caller::extract_output_images;
 pub use tokens::{extract_tokens, extract_usage};

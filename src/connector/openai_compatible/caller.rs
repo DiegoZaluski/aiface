@@ -923,9 +923,14 @@ pub async fn chat(
         .content
         .clone()
         .ok_or(ConnectorError::NoContent)?;
+    let images = super::images::extract_output_images(&response_text);
     Ok(ChatOutput {
         raw: response_text,
         message,
+        // OpenRouter-style gateways carry generated images in the answer
+        // itself (`message.images[]`); every other server in the family
+        // parses to an empty vec here.
+        images,
     })
 }
 

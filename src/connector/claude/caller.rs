@@ -500,6 +500,10 @@ pub async fn chat(
     Ok(ChatOutput {
         raw: response_text,
         message,
+        // Anthropic documents no image-OUTPUT surface in the Messages API
+        // (images are input blocks only) — the extractor is family-gated,
+        // but the explicit empty vec keeps the constructor uniform.
+        images: Vec::new(),
     })
 }
 

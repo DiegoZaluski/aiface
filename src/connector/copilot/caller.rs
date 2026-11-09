@@ -100,6 +100,9 @@ pub async fn chat(
     Ok(ChatOutput {
         raw: usage_raw(result.usage.as_ref().unwrap_or(&serde_json::Value::Null)),
         message: result.message,
+        // The Copilot runtime exposes no image-output surface — the
+        // explicit empty vec keeps the constructor uniform.
+        images: Vec::new(),
     })
 }
 
