@@ -210,7 +210,7 @@ fn is_transient_error_type(err: &ApiErrorDetail) -> bool {
 /// re-point its endpoint to the ambient AWS region (`AWS_REGION` /
 /// `AWS_DEFAULT_REGION`) — every other provider's registry URL is returned
 /// verbatim.
-fn resolve_base_url(
+pub(crate) fn resolve_base_url(
     params: &Parameters,
     config: &ProviderConfig,
 ) -> std::borrow::Cow<'static, str> {
@@ -854,7 +854,7 @@ fn build_chat_request(
 /// back to the OS keyring / environment and must have a key — including the
 /// OpenCode `zen` and `opencode-go` gateways. Returns an error when a cloud
 /// provider has no key configured.
-fn resolve_api_key(
+pub(crate) fn resolve_api_key(
     config: &ProviderConfig,
     params: &Parameters,
     service: Option<&str>,

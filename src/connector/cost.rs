@@ -74,12 +74,12 @@ impl From<ConnectorError> for CostError {
 
 /// Cheap, OFFLINE check the TUI runs BEFORE deciding to render any cost
 /// row. Supported: `openrouter`, `zen`, `opencode-go`, `charm`, `xai`,
-/// `vercel`, `kimi` — every other cloud provider returns `false`.
+/// `vercel`, `kimi`, `venice` — every other cloud provider returns `false`.
 #[must_use]
 pub fn supports_cost_reporting(provider: &str) -> bool {
     matches!(
         provider,
-        "openrouter" | "zen" | "opencode-go" | "charm" | "xai" | "vercel" | "kimi"
+        "openrouter" | "zen" | "opencode-go" | "charm" | "xai" | "vercel" | "kimi" | "venice"
     )
 }
 
@@ -122,6 +122,7 @@ pub async fn provider_session_cost(
         "xai" => xai_cost(config, params, &api_key, session_reported_costs).await,
         "vercel" => vercel_cost(config, params, &api_key, session_reported_costs).await,
         "kimi" => kimi_cost(config, params, &api_key, session_reported_costs).await,
+        "venice" => venice_cost(config, params, &api_key, session_reported_costs).await,
         // `supports_cost_reporting` guarantees this arm is unreachable.
         _ => Err(CostError::CostNotSupported),
     }
@@ -352,6 +353,25 @@ async fn kimi_cost(
     })
 }
 
+// Venice: every inference response already carries its REAL billed cost in a
+// top-level `cost: {usd, diem}` object (parsed by `extract_reported_cost`
+// into `TokenUsage::reported_cost`), so the session figure is the sum of the
+// captured amounts — no billing endpoint is consulted (the documented
+// `/billing` surface is beta and gated differently; an outage there must not
+// hide a known session cost). Balances are unknown rather than zeroed.
+async fn venice_cost(
+    _config: &ProviderConfig,
+    _params: &Parameters,
+    _api_key: &str,
+    session_reported_costs: &[f64],
+) -> Result<ProviderCost, CostError> {
+    Ok(ProviderCost {
+        session_cost_usd: reported_sum(session_reported_costs),
+        balance_usd: None,
+        credit_balance: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,6 +391,7 @@ mod tests {
             "xai",
             "vercel",
             "kimi",
+            "venice",
         ] {
             assert!(
                 supports_cost_reporting(provider),

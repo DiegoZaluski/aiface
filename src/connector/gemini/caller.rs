@@ -300,7 +300,7 @@ struct EmbedContentResponse {
 
 /// Gemini request headers: API key plus cache-affinity session headers when
 /// a session id is configured.
-fn gemini_headers(api_key: &str, session: Option<&str>) -> Vec<(&'static str, String)> {
+pub(crate) fn gemini_headers(api_key: &str, session: Option<&str>) -> Vec<(&'static str, String)> {
     let mut headers = vec![("x-goog-api-key", api_key.to_string())];
     if let Some(sid) = session {
         headers.push(("x-session-id", sid.to_string()));

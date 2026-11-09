@@ -414,6 +414,27 @@ pub struct Parameters {
     pub(crate) user: Option<String>,
     #[zeroize(skip)]
     pub(crate) base_url: Option<String>,
+    /// Image generation: how many images one call produces (OpenAI `n`,
+    /// Venice `variants`, Imagen `sampleCount`). `None` = provider default
+    /// (1 everywhere).
+    #[zeroize(skip)]
+    pub(crate) image_count: Option<u32>,
+    /// Image generation: pixel size sent verbatim (`"1024x1024"` on
+    /// OpenAI/xAI, `aspect_ratio` on Venice — the provider's own
+    /// vocabulary). `None` = the provider/model default.
+    #[zeroize(skip)]
+    pub(crate) image_size: Option<String>,
+    /// Image generation: quality tier sent verbatim (`"low"|"medium"|"high"`
+    /// on GPT Image models, `"hd"` on DALL·E, `1K|2K|4K` resolutions on
+    /// Venice). `None` = the model's default tier.
+    #[zeroize(skip)]
+    pub(crate) image_quality: Option<String>,
+    /// Image generation: response carrier override. Unset = the
+    /// per-model-class default (DALL·E gets `b64_json` requested
+    /// explicitly; GPT Image models get nothing, they are b64-only and
+    /// reject the field).
+    #[zeroize(skip)]
+    pub(crate) image_response_format: Option<String>,
 
     pub(crate) service_keyring: Option<String>,
     pub(crate) api_key: Option<String>,
@@ -446,6 +467,10 @@ impl Default for Parameters {
             session_id: None,
             user: None,
             base_url: None,
+            image_count: None,
+            image_size: None,
+            image_quality: None,
+            image_response_format: None,
             // Default to the canonical cosh keyring service so callers only
             // need `with_service_keyring` when they want to override it.
             service_keyring: Some(COSH_SERVICE.to_string()),

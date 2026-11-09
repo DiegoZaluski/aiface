@@ -13,6 +13,7 @@ pub(crate) mod copilot;
 pub(crate) mod cost;
 pub mod decision;
 pub(crate) mod discovery;
+pub(crate) mod economy;
 pub(crate) mod gemini;
 pub mod oauth;
 pub(crate) mod openai;
@@ -43,7 +44,7 @@ pub use decision::{
     DecisionAnswer, DecisionOutput, DecisionQuestion, DecisionRequest, Probabilities,
     ProbabilitySource,
 };
-pub use output::{ChatOutput, ChatStream, LsOutput, ModelInfo, StreamChunk};
+pub use output::{ChatOutput, ChatStream, GeneratedImage, ImageOutput, LsOutput, ModelInfo, StreamChunk};
 pub use provider::Family;
 // Re-exported so `Connector::token_usage` consumers name the type without
 // reaching into the private claude module path.

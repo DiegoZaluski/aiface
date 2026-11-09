@@ -1,8 +1,9 @@
 use super::TokenUsage;
 use super::cost::{CostError, ProviderCost, provider_session_cost};
 use super::decision::DecisionRequest;
+use super::economy;
 use super::error::ConnectorError;
-use super::output::{ChatOutput, ChatStream, LsOutput};
+use super::output::{ChatOutput, ChatStream, ImageOutput, LsOutput};
 use super::params::{ChatMessage, Parameters, ResponseFormat, ToolCallMode, ToolDefinition};
 use super::provider::{Family, ProviderConfig, get_provider};
 
@@ -48,7 +49,7 @@ impl Connector {
     /// `xai`, `deepseek`, `perplexity`, `fireworks`, `cohere`, `huggingface`,
     /// `sambanova`, `poe`, `cerebras`, `nvidia`, `anyscale`, `vercel`, `cloudflare`,
     /// `azure`, `ollama`, `lmstudio`, `vllm`, `llamacpp`, `gemini`, `zai`,
-    /// `kimi`, `zen`, `opencode-go`.
+    /// `kimi`, `zen`, `opencode-go`, `venice`.
     ///
     /// # Errors
     ///
@@ -257,6 +258,57 @@ impl Connector {
         self.params.session_id.as_deref()
     }
 
+    /// How many images one [`generate_image`](Self::generate_image) call
+    /// produces (OpenAI `n`, Venice `variants`, Imagen `sampleCount`).
+    ///
+    /// Provider-dependent caps apply (OpenAI/xAI 1–10, Venice 1,
+    /// Imagen 1–4); the provider rejects out-of-range values. Each image
+    /// bills separately. Unset = 1.
+    pub fn with_image_count(mut self, n: u32) -> Self {
+        self.params.image_count = Some(n);
+        self
+    }
+
+    /// Image size, sent verbatim in each provider's own vocabulary:
+    ///
+    /// - OpenAI / compatible gateways: pixel size string (`"1024x1024"`,
+    ///   `"1536x1024"`; GPT Image models also take `"auto"` and arbitrary
+    ///   16-multiples). xAI has NO `size` field — on that provider set
+    ///   only [`with_image_quality`](Self::with_image_quality) (its
+    ///   resolution tiers) and `aspect_ratio`-style values are rejected;
+    ///   sending this knob to xAI is a 400.
+    /// - Gemini: aspect ratio (`"16:9"`, `"1:1"`, …) — the
+    ///   `imageConfig.aspectRatio` knob; this surface has no pixel-size
+    ///   field.
+    ///
+    /// Unset = the model's default.
+    pub fn with_image_size(mut self, v: impl Into<String>) -> Self {
+        self.params.image_size = Some(v.into());
+        self
+    }
+
+    /// Image quality tier, sent verbatim: `"low"|"medium"|"high"` (GPT
+    /// Image), `"hd"|"standard"` (DALL·E 3), `"1K"|"2K"|"4K"` (Venice
+    /// resolution tiers, xAI resolution tiers, Gemini
+    /// `imageConfig.imageSize`). Unset = the model's default tier — on
+    /// Venice that is also the BILLED tier when the model prices
+    /// qualities, so set it explicitly when cost matters.
+    pub fn with_image_quality(mut self, v: impl Into<String>) -> Self {
+        self.params.image_quality = Some(v.into());
+        self
+    }
+
+    /// Override the OpenAI Images response carrier (`"b64_json"` or
+    /// `"url"`). Unset, the connector picks per model class: DALL·E
+    /// models get `"b64_json"` requested explicitly (their default is an
+    /// expiring URL), GPT Image models get the field omitted (they are
+    /// b64-only and REJECT it). Only touch this for a gateway whose
+    /// default differs from OpenAI's documented behavior.
+    pub fn with_image_response_format(mut self, v: impl Into<String>) -> Self {
+        self.params.image_response_format = Some(v.into());
+        self
+    }
+
     pub fn with_service_keyring(mut self, v: impl Into<String>) -> Self {
         self.params.service_keyring = Some(v.into());
         self
@@ -348,6 +400,7 @@ impl Connector {
     /// `Deserialization` if the response is malformed, or `Network` on transport failure.
     pub async fn chat(&self, prompt: &str) -> Result<ChatOutput, ConnectorError> {
         let provider = self.provider()?;
+        economy::maybe_note_for_chat(provider, &self.params, self.effective_model().unwrap_or(""), false);
         let service = self.params.service_keyring.as_deref();
         match provider.family {
             Family::OpenAICompatible => {
@@ -374,6 +427,7 @@ impl Connector {
         system: &str,
     ) -> Result<ChatOutput, ConnectorError> {
         let provider = self.provider()?;
+        economy::maybe_note_for_chat(provider, &self.params, self.effective_model().unwrap_or(""), true);
         let service = self.params.service_keyring.as_deref();
         match provider.family {
             Family::OpenAICompatible => {
@@ -423,6 +477,78 @@ impl Connector {
         }
     }
 
+    /// Generate an image from a text prompt.
+    ///
+    /// Available on the providers that document an image-generation
+    /// surface:
+    ///
+    /// - **OpenAI-shaped** (`/images/generations`): `openai`, `xai`,
+    ///   `together`, `nebius`, `venice` — the OpenAI Images contract,
+    ///   shared by every compatible gateway. Use
+    ///   [`with_image_count`](Self::with_image_count) for `n`,
+    ///   [`with_image_size`](Self::with_image_size) for `size`
+    ///   (`"1024x1024"`), [`with_image_quality`](Self::with_image_quality)
+    ///   for the model's quality tier.
+    /// - **Gemini**: `gemini` with an image-capable model
+    ///   (`gemini-2.5-flash-image`, `gemini-2.0-flash-preview-image-generation`)
+    ///   — images arrive as base64 `inlineData` parts.
+    ///
+    /// Provider defaults: the image model follows
+    /// [`with_model`](Self::with_model) when set; each family falls back
+    /// to its own sensible default (`gpt-image-1`, `gemini-2.5-flash-image`)
+    /// otherwise.
+    ///
+    /// Providers with NO documented image surface (`claude`, `copilot`,
+    /// local model servers, the decision-only family) return
+    /// `NotImplemented` before any request is sent. A safety-blocked
+    /// generation (Gemini `IMAGE_SAFETY`, provider moderation) is a
+    /// normal answer with an EMPTY image list, not an error.
+    ///
+    /// ```no_run
+    /// # use aiface::connector::Connector;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let out = Connector::new("openai")?
+    ///     .with_model("gpt-image-1")
+    ///     .with_api_key("sk-...")
+    ///     .generate_image("a red panda astronaut, watercolor")
+    ///     .await?;
+    /// if let Some(img) = out.first() {
+    ///     std::fs::write(format!("out.{}", img.extension()), img.bytes())?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns `NotImplemented` for providers without an image surface,
+    /// `MissingApiKey` if no API key is found, `HttpError` on non-2xx
+    /// status, `Deserialization` if the response is malformed, or
+    /// `Network` on transport failure.
+    pub async fn generate_image(&self, prompt: &str) -> Result<ImageOutput, ConnectorError> {
+        let provider = self.provider()?;
+        let service = self.params.service_keyring.as_deref();
+        match provider.family {
+            Family::OpenAICompatible | Family::OpenAi => {
+                openai_compatible::generate_image(provider, &self.params, prompt, service).await
+            }
+            Family::Gemini => {
+                gemini::generate_image(provider, &self.params, prompt, service).await
+            }
+            // No image-generation surface on these families.
+            Family::Claude => Err(ConnectorError::NotImplemented(
+                "image generation on claude (Anthropic documents no Images API; its surface is chat, tools and caching)",
+            )),
+            Family::Copilot => Err(ConnectorError::NotImplemented(
+                "image generation on copilot (the Copilot runtime exposes no image API)",
+            )),
+            // The System One family's only surface is decisions.
+            Family::SystemOne => Err(ConnectorError::NotImplemented(
+                "image generation on a decision provider",
+            )),
+        }
+    }
+
     /// Stream a chat completion with a user prompt.
     ///
     /// Returns a [`ChatStream`](crate::connector::output::ChatStream) that yields [`StreamChunk`](crate::connector::output::StreamChunk) items. After the
@@ -435,6 +561,7 @@ impl Connector {
     /// or `Network` on transport failure before the stream starts.
     pub async fn stream_chat(&self, prompt: &str) -> Result<ChatStream, ConnectorError> {
         let provider = self.provider()?;
+        economy::maybe_note_for_chat(provider, &self.params, self.effective_model().unwrap_or(""), false);
         // The explicit `service` argument wins if provided, otherwise fall
         // back to the connector's configured keyring service.
         let service = self.params.service_keyring.as_deref();
@@ -474,6 +601,7 @@ impl Connector {
         system: &str,
     ) -> Result<ChatStream, ConnectorError> {
         let provider = self.provider()?;
+        economy::maybe_note_for_chat(provider, &self.params, self.effective_model().unwrap_or(""), true);
         let service = self.params.service_keyring.as_deref();
         match provider.family {
             Family::OpenAICompatible => {
@@ -520,6 +648,8 @@ impl Connector {
         system: &str,
     ) -> Result<ChatStream, ConnectorError> {
         let provider = self.provider()?;
+        // The summarizer's call is already the economical shape for its
+        // purpose (no tool schemas in context) — exempt from hints.
         let mut params = self.params.clone();
         params.tools = None;
         params.tool_choice = None;
@@ -565,6 +695,7 @@ impl Connector {
         messages: &[ChatMessage],
     ) -> Result<ChatStream, ConnectorError> {
         let provider = self.provider()?;
+        economy::maybe_note_for_chat(provider, &self.params, self.effective_model().unwrap_or(""), true);
         let params = &self.params;
         match provider.family {
             Family::OpenAICompatible => {
@@ -694,7 +825,8 @@ impl Connector {
     ///     `charm`,
     ///     `xai`,
     ///     `vercel`,
-    ///     `kimi`.
+    ///     `kimi`,
+    ///     `venice`.
     ///
     /// Unsupported:
     ///     `openai`,
@@ -729,7 +861,11 @@ impl Connector {
     /// from the provider's account endpoint instead. `kimi` reports no
     /// per-request cost in its responses, so the session figure stays the
     /// (empty) reported sum and only `balance_usd` carries real data
-    /// (account `available_balance` from `GET /users/me/balance`).
+    /// (account `available_balance` from `GET /users/me/balance`). `venice`
+    /// rides the reported sum too — every response carries its REAL billed
+    /// cost in a top-level `cost` object — but exposes no inference-key
+    /// balance endpoint (the `/billing` surface is beta), so balances stay
+    /// `None`.
     ///
     /// # Errors
     ///

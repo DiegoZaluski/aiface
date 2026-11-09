@@ -652,6 +652,50 @@ const KNOWN_CONTEXT_WINDOWS: &[KnownContextWindow] = &[
         window: 1_000_000,
         aliases: &["glm-5.3", "glm-5.3-flash"],
     },
+    // Venice.ai gateway ids (GET /models → context_length). Venice re-hosts
+    // models under VENDOR-PREFIXED ids, some with an `e2ee-` prefix for the
+    // end-to-end-encrypted deployments; the windows below are from the live
+    // catalog (2026-11). Only gateway-namespace ids are listed here: bare,
+    // provider-agnostic ids (`gemma-…`, `mistral-small-…`) are deliberately
+    // LEFT OUT even though Venice serves them, because these tables match
+    // for EVERY provider — a Venice-catalog window on a bare id would
+    // silently shadow the official vendor figures (Gemma 3 27B is a 128k
+    // model by Google's own card, not the 198k Venice lists) for users of
+    // openai/mistral/huggingface/openrouter. Such ids fall through to the
+    // models.dev catalog instead. Ids already covered above resolve through
+    // existing entries (`zai-org-glm-5-2` via the glm-5.2 alias,
+    // `deepseek-v4-flash`/`-0731` via the deepseek-v4 entry,
+    // `claude-sonnet-5` via the claude 1M entry). The venice-uncensored
+    // line (32,768) stays off for the same bare-id reason.
+    KnownContextWindow {
+        window: 1_048_576,
+        aliases: &["z-ai-glm-5-3-flash", "e2ee-glm-5-3-flash"],
+    },
+    KnownContextWindow {
+        window: 1_000_000,
+        aliases: &[
+            "z-ai-glm-5-3",
+            "e2ee-glm-5-2-p",
+            "xiaomi-mimo-v2-6-flash",
+            "minimax-m3-1-flash",
+            "claude-sonnet-5-5",
+            "claude-haiku-5-5",
+            "gemini-3-5-flash-lite",
+            "gemini-3-6-flash",
+            "gemini-3-7-flash",
+            "gemini-3-8-flash",
+            "gemini-3-1-pro-preview",
+            "gemini-4-argon",
+        ],
+    },
+    KnownContextWindow {
+        window: 256_000,
+        aliases: &["gemma-4-uncensored", "google-gemma-4-31b-it", "google-gemma-4-26b-a4b-it"],
+    },
+    KnownContextWindow {
+        window: 128_000,
+        aliases: &["openai-gpt-oss-120b", "e2ee-gpt-oss-120b-p"],
+    },
     KnownContextWindow {
         window: 204_800,
         aliases: &[
@@ -1016,6 +1060,65 @@ const KNOWN_REASONING: &[KnownReasoning] = &[
         supported: true,
         efforts: Some(&["low", "high", "max"]),
         aliases: &["glm-5.3", "glm-5.3-flash"],
+    },
+    // Venice.ai gateway ids — capabilities mirror `GET /models`
+    // (`model_spec.capabilities`), the catalog that bills the models.
+    // These tables match for EVERY provider (there is no provider scoping),
+    // so only VENICE-NAMESPACE ids are listed; bare, provider-agnostic ids
+    // stay out — the gateway's snapshot must not become the authority for
+    // another vendor's official model line (those resolve through the
+    // models.dev catalog). Ids already keyed by an existing entry above
+    // (`zai-org-glm-5-2` via glm-5.2, `deepseek-v4-flash*` via the
+    // deepseek-v4 entry, `claude-sonnet-5` via the claude 1M entry) keep
+    // their existing answers and are NOT duplicated here.
+    KnownReasoning {
+        supported: true,
+        efforts: Some(&["none", "low", "medium", "high"]),
+        aliases: &["openai-gpt-oss-120b", "e2ee-gpt-oss-120b-p", "deepseek-v4-flash-0731"],
+    },
+    KnownReasoning {
+        supported: true,
+        efforts: Some(&["low", "medium", "high", "xhigh", "max"]),
+        aliases: &["claude-sonnet-5-5"],
+    },
+    KnownReasoning {
+        supported: true,
+        efforts: Some(&["none", "low", "medium", "high", "xhigh", "max"]),
+        aliases: &["claude-haiku-5-5"],
+    },
+    KnownReasoning {
+        supported: true,
+        efforts: Some(&["low", "medium", "high"]),
+        aliases: &["gemini-3-1-pro-preview"],
+    },
+    KnownReasoning {
+        supported: true,
+        efforts: Some(&["none", "low", "medium", "high"]),
+        aliases: &["google-gemma-4-31b-it", "google-gemma-4-26b-a4b-it"],
+    },
+    KnownReasoning {
+        supported: true,
+        efforts: None,
+        aliases: &[
+            "z-ai-glm-5-3",
+            "z-ai-glm-5-3-flash",
+            "e2ee-glm-5-3-flash",
+            "xiaomi-mimo-v2-6-flash",
+            "minimax-m3-1-flash",
+            "gemini-3-7-flash",
+            "gemini-3-8-flash",
+            "gemini-4-argon",
+        ],
+    },
+    KnownReasoning {
+        supported: false,
+        efforts: None,
+        aliases: &[
+            "venice-uncensored-1-2",
+            "venice-uncensored-role-play",
+            "gemma-4-uncensored",
+            "openai-gpt-4o-mini-2024-07-18",
+        ],
     },
     KnownReasoning {
         supported: true,

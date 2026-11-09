@@ -19,13 +19,13 @@ pub struct ProviderConfig {
 }
 ```
 
-~28 providers are registered: `openai`, `groq`, `mistral`, `together`,
+~30 providers are registered: `openai`, `groq`, `mistral`, `together`,
 `openrouter`, `xai`, `deepseek`, `perplexity`, `fireworks`, `cohere`,
 `huggingface`, `sambanova`, `poe`, `cerebras`, `nvidia`, `anyscale`,
 `vercel`, `cloudflare`, `azure`, `ollama`, `lmstudio`, `vllm`, `llamacpp`,
-`gemini`, `claude`, `zai`, `charm`, `opencode`. The local model servers (ollama,
-lmstudio, vllm, llamacpp, and the extra ones below) point at
-`http://localhost:*`.
+`gemini`, `claude`, `zai`, `charm`, `opencode`, `kimi`, `venice`. The local
+model servers (ollama, lmstudio, vllm, llamacpp, and the extra ones below)
+point at `http://localhost:*`.
 
 Local providers (configured by URL, never by API key):
 
@@ -114,6 +114,62 @@ pub fn is_zen_free_model(model: &str) -> bool;
 pub fn set_zen_public_tier_enabled(enabled: bool);   // process-wide opt-in
 pub fn zen_public_tier_enabled() -> bool;
 ```
+
+## The Venice.ai provider (`venice`) — private OpenAI-compatible gateway
+
+`venice` points at `https://api.venice.ai/api/v1` (docs.venice.ai) — a
+drop-in replacement for the OpenAI Chat Completions endpoint with Bearer
+auth (`VENICE_API_KEY`). It joins the OpenAI-compatible family through the
+standard surfaces: chat (streaming, tool calling, vision, JSON schema),
+`/embeddings`, and `GET /models` all match the OpenAI shapes, so the shared
+family path serves them unchanged. No `venice_parameters` rides a default
+request — the connector sends standard OpenAI fields only, and Venice's
+own system-prompt default stays on.
+
+What is Venice-specific, and where it lands:
+
+- **Real billed cost on every response.** Each inference answer carries a
+  top-level `cost: {usd, diem}` object (the same trailer shape Zen/Go
+  use), parsed into `TokenUsage::reported_cost` by the shared extractor;
+  `supports_cost_reporting("venice")` is `true` and `session_cost` sums
+  the captured amounts. No billing endpoint is consulted — the documented
+  `/billing` surface is beta, and a `balance_usd` of `None` beats a wrong
+  zero.
+- **Rich model catalog, keyless.** `GET /models` answers WITHOUT auth and
+  carries `model_spec` per model: pricing (per-1M token `input`/`output`/
+  `cache_input`), `context_length`, capabilities (`supportsReasoning`,
+  `supportsReasoningEffort` + effort options), privacy tier (`private` =
+  zero data retention, `anonymized` = not guaranteed) and `traits`.
+  `list_models` picks the ids up through the shared path.
+- **Static discovery entries.** The gateway's ids (vendor-prefixed, some
+  with an `e2ee-` prefix for end-to-end-encrypted deployments) resolve
+  their context windows and reasoning capabilities from the static tables
+  (`KNOWN_CONTEXT_WINDOWS` / `KNOWN_REASONING`) before any catalog
+  fallback.
+- **Pricing model.** Prepaid credits that never expire, or per-request
+  USDC via the x402 protocol. `model_spec.pricing` reports `{usd, diem}`
+  (1 Diem = $1/day of staked compute allowance) and already reflects any
+  promotional discount active for the calling account.
+
+The default model is the price/performance pick from the live catalog:
+`z-ai-glm-5-3-flash` (GLM 5.3 Flash — $0.15 input / $0.50 output per 1M
+tokens, ~1M context, code-optimized, `private`). Cheaper alternatives for
+bulk workloads: `deepseek-v4-flash-0731` ($0.13/$0.26, 1M) and
+`openai-gpt-oss-120b` ($0.07/$0.30, 128k). Cache reads are billed around
+1/10 of the input price on most models, so multi-turn sessions amortize
+cheaply.
+
+### Image generation on Venice
+
+Venice's gateway also mirrors the OpenAI Images route
+(`/images/generations`), so `generate_image` works through the shared
+OpenAI-shaped path with `with_model` picking one of the catalog's
+`type=image` models (e.g. `z-image-turbo` at $0.01/image). Venice serves
+ONE image per call — `with_image_count` is not sent (its `variants`
+parameter would ride its native `/image/generate` surface, which the
+connector does not use). `with_image_quality` carries the resolution
+tier (`"1K"`/`"2K"`/`"4K"`) on quality-tiered models — the billed tier
+defaults to the model's `defaultQuality` when unset.
 
 ## The Bedrock provider (`bedrock`) — region-templated base URL
 

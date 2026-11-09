@@ -878,3 +878,112 @@ impl LsOutput {
         &self.models
     }
 }
+
+/// One generated image, normalized across providers.
+///
+/// Every provider surface the connector serves hands the image back as
+/// raw bytes plus a MIME type:
+///
+/// - OpenAI `/v1/images/generations` (and compatible gateways) returns
+///   base64 `b64_json` (data-URI spellings tolerated; live http(s) URLs
+///   are NEVER fetched and never handed to the caller — see the
+///   `openai_compatible::images` module doc).
+/// - Gemini `generateContent` returns `inlineData{mimeType, data}` base64
+///   parts (one part per image; a multi-image answer yields several).
+/// - Venice returns base64 `images[]` strings.
+///
+/// The bytes are already DECODED — call [`bytes`](GeneratedImage::bytes)
+/// and write them straight to a file.
+#[derive(Clone, Debug)]
+pub struct GeneratedImage {
+    bytes: Vec<u8>,
+    mime_type: String,
+    revised_prompt: Option<String>,
+    /// The full response text, shared across every image of one call
+    /// (`n = 10` responses are multi-MB; one `Arc<str>` beats ten copies).
+    raw: std::sync::Arc<str>,
+}
+
+impl GeneratedImage {
+    pub(crate) fn new(
+        bytes: Vec<u8>,
+        mime_type: String,
+        revised_prompt: Option<String>,
+        raw: String,
+    ) -> Self {
+        Self {
+            bytes,
+            mime_type,
+            revised_prompt,
+            raw: std::sync::Arc::from(raw.as_str()),
+        }
+    }
+
+    /// Decoded image bytes, ready to write to a file (the format matches
+    /// [`mime_type`](Self::mime_type) — `png`, `jpeg`, `webp`).
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// MIME type of [`bytes`](Self::bytes) (`image/png`, `image/jpeg`, …).
+    #[must_use]
+    pub fn mime_type(&self) -> &str {
+        &self.mime_type
+    }
+
+    /// File extension matching the MIME type (`png`, `jpeg`, `webp`, …).
+    /// Sane default for naming the output; falls back to `png`.
+    #[must_use]
+    pub fn extension(&self) -> &str {
+        match self.mime_type.rsplit('/').next().unwrap_or("png") {
+            "jpeg" | "jpg" => "jpg",
+            ext => ext,
+        }
+    }
+
+    /// The model's rewritten prompt, when the provider returns one
+    /// (OpenAI DALL·E models do; GPT Image models never do).
+    #[must_use]
+    pub fn revised_prompt(&self) -> Option<&str> {
+        self.revised_prompt.as_deref()
+    }
+
+    /// Raw JSON response from the API as received (unmodified) — the
+    /// carrier of fields this type does not model (usage on OpenAI,
+    /// `finishReason` on Gemini, cost on Venice).
+    #[must_use]
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+}
+
+/// Result of a [`Connector::generate_image`](crate::connector::Connector::generate_image)
+/// call.
+///
+/// Providers return a variable number of images per call (`n` on OpenAI,
+/// `variants` on Venice, `sampleCount` on Imagen, and Gemini may answer a
+/// single prompt with several images); [`images`](ImageOutput::images)
+/// yields all of them in provider order.
+#[derive(Debug)]
+pub struct ImageOutput {
+    images: Vec<GeneratedImage>,
+}
+
+impl ImageOutput {
+    pub(crate) fn new(images: Vec<GeneratedImage>) -> Self {
+        Self { images }
+    }
+
+    /// All generated images, in the order the provider returned them.
+    #[must_use]
+    pub fn images(&self) -> &[GeneratedImage] {
+        &self.images
+    }
+
+    /// The first generated image — the common case for `n = 1` calls.
+    #[must_use]
+    pub fn first(&self) -> Option<&GeneratedImage> {
+        self.images.first()
+    }
+}

@@ -556,6 +556,28 @@ const PROVIDERS: &[(&str, ProviderConfig)] = &[
             "kimi-k3",
         ),
     ),
+    // Venice.ai: privacy-first OpenAI-compatible gateway
+    // (`https://api.venice.ai/api/v1`, docs.venice.ai) — a drop-in
+    // replacement for the OpenAI Chat Completions endpoint with Bearer auth
+    // (`VENICE_API_KEY`). The chat, embeddings and models surfaces are the
+    // standard OpenAI shapes, so the shared family path serves them
+    // unchanged; every request reports its REAL billed cost in a top-level
+    // `cost: {usd, diem}` object on the response (the same shape Zen/Go
+    // use), which the cost-reporting path reads. `GET /models` answers
+    // without a key and carries `model_spec` with per-model pricing,
+    // context length, capabilities and privacy tier. Default model is the
+    // price/performance pick from the live catalog (2026-11): GLM 5.3
+    // Flash — $0.15/$0.50 per 1M tokens, 1M context, code-optimized and
+    // `private` (zero data retention).
+    (
+        "venice",
+        ProviderConfig::cloud(
+            "venice",
+            Family::OpenAICompatible,
+            "https://api.venice.ai/api/v1",
+            "z-ai-glm-5-3-flash",
+        ),
+    ),
     // ── Local providers (configured by URL, no API key) ──────────────
     (
         "ollama",
@@ -674,6 +696,9 @@ const API_KEY_ENVS: &[(&str, &str)] = &[
     // endpoint (platform.kimi.ai/docs/api/overview —
     // `Authorization: Bearer $MOONSHOT_API_KEY`).
     ("kimi", "MOONSHOT_API_KEY"),
+    // Venice.ai: the API key created in the Venice account settings, sent as
+    // `Authorization: Bearer $VENICE_API_KEY` (docs.venice.ai).
+    ("venice", "VENICE_API_KEY"),
     // TypeSafe (Jev, System One decisions API): Bearer key issued by
     // console.typesafe.ai, documented as `TYPESAFE_API_KEY`.
     ("typesafe", "TYPESAFE_API_KEY"),

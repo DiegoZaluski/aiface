@@ -14,8 +14,9 @@ chat, tool calling, embeddings, token usage and cost tracking.
 
 ## Highlights
 
-- **One `Connector`, 28 providers** — native adapters for Claude, OpenAI and
-  Gemini, plus OpenAI-compatible endpoints. Swap the name passed to
+- **One `Connector`, 30 providers** — native adapters for Claude, OpenAI and
+  Gemini, plus OpenAI-compatible endpoints (DeepSeek, Groq, xAI, Kimi,
+  Venice, Ollama, LM Studio, vLLM, …). Swap the name passed to
   `Connector::new` to switch backends.
 - **Streaming with mid-stream retry** — automatic retry on 429/5xx/network
   errors with backoff and `retry-after` support; a reset marker lets you
@@ -27,7 +28,10 @@ chat, tool calling, embeddings, token usage and cost tracking.
   Device Grant flows (RFC 7636 / 8252 / 8628), plus a GitHub Copilot
   device-flow adapter, with tokens stored in the OS keyring.
 - **Multimodal** — image blocks travel inline (base64) on the message
-  channel.
+  channel; `generate_image` produces images on the providers that offer
+  image generation (OpenAI-shaped `/images/generations` surfaces —
+  OpenAI, xAI, Together, Venice, … — and Gemini's image models), with
+  bytes decoded and ready to save.
 - **System One decisions** — typed decisions with probabilities from
   decision models (TypeSafe Jev, Microsoft-Decision-1, OpenRouter's
   System One route) or wrapped LLMs, under one `Connector::decide`
